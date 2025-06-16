@@ -34,21 +34,54 @@ apt update && apt upgrade -y
 
 # Install required packages
 echo -e "${YELLOW}Installing required packages...${NC}"
-apt install -y python3 python3-pip git curl wget unzip docker.io docker-compose-plugin
+apt install -y python3 python3-pip git curl wget unzip
+
+# Install Docker using the official Docker installation script
+echo -e "${YELLOW}Installing Docker using the official Docker script...${NC}"
+curl -fsSL https://get.docker.com -o get-docker.sh
+sh get-docker.sh
+
+# Install Docker Compose
+echo -e "${YELLOW}Installing Docker Compose...${NC}"
+mkdir -p ~/.docker/cli-plugins/
+curl -SL https://github.com/docker/compose/releases/download/v2.24.6/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose
+chmod +x ~/.docker/cli-plugins/docker-compose
 
 # Enable Docker service
 echo -e "${YELLOW}Enabling Docker service...${NC}"
 systemctl enable docker
 systemctl start docker
 
+# Verify Docker installation
+echo -e "${YELLOW}Verifying Docker installation...${NC}"
+docker --version
+docker compose version
+
 # Create directory for the bot
 echo -e "${YELLOW}Creating directory for the bot...${NC}"
 mkdir -p /opt/mirror-leech-bot
 cd /opt/mirror-leech-bot
 
-# Clone the repository
-echo -e "${YELLOW}Cloning repository...${NC}"
-git clone https://github.com/anasty17/mirror-leech-telegram-bot .
+# Check if directory is empty before cloning
+echo -e "${YELLOW}Preparing to clone repository...${NC}"
+if [ "$(ls -A /opt/mirror-leech-bot)" ]; then
+    echo -e "${YELLOW}Directory not empty. Checking if repo is already cloned...${NC}"
+    if [ -f "/opt/mirror-leech-bot/config_sample.py" ]; then
+        echo -e "${GREEN}Repository already exists. Updating...${NC}"
+        git pull
+    else
+        echo -e "${RED}Directory not empty and doesn't look like our repository.${NC}"
+        echo -e "${YELLOW}Please backup and remove contents or specify a different directory.${NC}"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}Cloning repository...${NC}"
+    git clone https://github.com/anasty17/mirror-leech-telegram-bot .
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to clone repository. Check your internet connection.${NC}"
+        exit 1
+    fi
+fi
 
 # Install dependencies for command-line tools
 echo -e "${YELLOW}Installing Python dependencies...${NC}"
@@ -221,7 +254,25 @@ echo -e "${GREEN}Configuration completed!${NC}"
 
 # Build and start the Docker container
 echo -e "${YELLOW}Building and starting the Docker container...${NC}"
-docker compose up --build -d
+cd /opt/mirror-leech-bot
+docker compose version
+echo -e "${YELLOW}Starting Docker container build...${NC}"
+
+# Fallback to docker-compose if docker compose doesn't work
+if docker compose up --build -d; then
+    echo -e "${GREEN}Docker Compose build successful!${NC}"
+else
+    echo -e "${YELLOW}docker compose command failed, trying with docker-compose...${NC}"
+    
+    # Install docker-compose if not already installed
+    if ! command -v docker-compose &> /dev/null; then
+        echo -e "${YELLOW}Installing docker-compose...${NC}"
+        curl -SL "https://github.com/docker/compose/releases/download/v2.24.6/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        chmod +x /usr/local/bin/docker-compose
+    fi
+    
+    docker-compose up --build -d
+fi
 
 echo -e "${GREEN}=================================${NC}"
 echo -e "${GREEN}Installation completed successfully!${NC}"
@@ -237,10 +288,12 @@ echo -e "${BLUE}For rclone web interface: ssh -L 8080:localhost:8080 username@yo
 echo -e "${YELLOW}Then access them via http://localhost:8090, http://localhost or http://localhost:8080 in your browser${NC}"
 
 echo -e "${GREEN}Bot Management:${NC}"
-echo -e "${YELLOW}You can view logs using: docker compose logs --follow${NC}"
-echo -e "${YELLOW}To stop the bot: docker compose stop${NC}"
-echo -e "${YELLOW}To start the bot again: docker compose start${NC}"
-echo -e "${YELLOW}To restart the bot: docker compose restart${NC}"
+echo -e "${YELLOW}You can check if the bot is running with: docker ps${NC}"
+echo -e "${YELLOW}You can view logs using: cd /opt/mirror-leech-bot && docker compose logs --follow${NC}"
+echo -e "${YELLOW}If docker compose doesn't work, try: docker-compose logs --follow${NC}"
+echo -e "${YELLOW}To stop the bot: cd /opt/mirror-leech-bot && docker compose stop (or docker-compose stop)${NC}"
+echo -e "${YELLOW}To start the bot again: cd /opt/mirror-leech-bot && docker compose start (or docker-compose start)${NC}"
+echo -e "${YELLOW}To restart the bot: cd /opt/mirror-leech-bot && docker compose restart (or docker-compose restart)${NC}"
 echo -e "${GREEN}=================================${NC}"
 echo -e "${BLUE}See the README.md file for more details on usage and configuration.${NC}"
 echo -e "${GREEN}Your bot is configured for PRIVATE USE - only your Telegram ID ($OWNER_ID) can access it!${NC}"
