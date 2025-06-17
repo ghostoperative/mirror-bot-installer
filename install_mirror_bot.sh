@@ -85,7 +85,13 @@ fi
 
 # Install dependencies for command-line tools
 echo -e "${YELLOW}Installing Python dependencies...${NC}"
-pip3 install -r requirements-cli.txt
+echo -e "${YELLOW}Creating Python virtual environment...${NC}"
+apt install -y python3-venv python3-full
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements-cli.txt
+echo -e "${GREEN}Python dependencies installed in virtual environment${NC}"
 
 # Configure firewall for private use (only allow SSH and block external web access)
 echo -e "${YELLOW}Configuring firewall for private use...${NC}"
@@ -203,8 +209,10 @@ if [[ $setup_gdrive == "y" || $setup_gdrive == "Y" ]]; then
     if [ -f "credentials.json" ]; then
         echo -e "${GREEN}credentials.json found!${NC}"
         echo -e "${YELLOW}Generating token.pickle file...${NC}"
-        pip3 install google-api-python-client google-auth-httplib2 google-auth-oauthlib
-        python3 generate_drive_token.py
+        # Ensure we're using the virtual environment
+        source venv/bin/activate
+        pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+        python generate_drive_token.py
 
         echo -e "${YELLOW}Enter your Google Drive folder ID or TeamDrive ID:${NC}"
         read gdrive_id
@@ -258,8 +266,42 @@ cd /opt/mirror-leech-bot
 docker compose version
 echo -e "${YELLOW}Starting Docker container build...${NC}"
 
-# Fallback to docker-compose if docker compose doesn't work
-if docker compose up --build -d; then
+# Create a custom Dockerfile with DNS settings
+echo -e "${YELLOW}Creating a customized Dockerfile with DNS settings...${NC}"
+cp Dockerfile Dockerfile.original
+cat > Dockerfile << EOL
+FROM anasty17/mltb:latest
+
+# Set DNS servers to fix connectivity issues
+RUN echo "nameserver 8.8.8.8" > /etc/resolv.conf && \
+    echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+
+WORKDIR /usr/src/app
+RUN chmod 777 /usr/src/app
+
+RUN python3 -m venv mltbenv
+
+COPY requirements.txt .
+RUN mltbenv/bin/pip install --no-cache-dir --timeout 100 -r requirements.txt
+
+COPY . .
+
+CMD ["bash", "start.sh"]
+EOL
+
+# Configure Docker daemon with reliable DNS
+echo -e "${YELLOW}Configuring Docker daemon with reliable DNS servers...${NC}"
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json << EOL
+{
+  "dns": ["8.8.8.8", "8.8.4.4"]
+}
+EOL
+systemctl restart docker
+
+echo -e "${YELLOW}Starting Docker build with improved network settings...${NC}"
+# Try with --network=host and DNS settings
+if docker compose build --no-cache --network=host && docker compose up -d; then
     echo -e "${GREEN}Docker Compose build successful!${NC}"
 else
     echo -e "${YELLOW}docker compose command failed, trying with docker-compose...${NC}"
@@ -271,7 +313,19 @@ else
         chmod +x /usr/local/bin/docker-compose
     fi
     
-    docker-compose up --build -d
+    if docker-compose build --no-cache --network=host && docker-compose up -d; then
+        echo -e "${GREEN}Docker Compose build successful with docker-compose!${NC}"
+    else
+        echo -e "${RED}Build failed. Trying alternative approach...${NC}"
+        
+        echo -e "${YELLOW}Pulling pre-built image directly instead of building...${NC}"
+        if docker pull anasty17/mltb:latest && docker compose up -d; then
+            echo -e "${GREEN}Successfully started using pre-built image!${NC}"
+        else
+            echo -e "${RED}All attempts failed. Please check your internet connection and DNS settings.${NC}"
+            exit 1
+        fi
+    fi
 fi
 
 echo -e "${GREEN}=================================${NC}"
